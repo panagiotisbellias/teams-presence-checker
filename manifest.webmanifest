@@ -1,0 +1,18 @@
+{
+  "name": "Teams Presence Checker",
+  "short_name": "Teams Status",
+  "description": "Personal read-only Microsoft Teams presence checker",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f9",
+  "theme_color": "#6264a7",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

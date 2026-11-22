@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#6264a7">
+  <meta name="description" content="A personal, read-only Microsoft Teams presence checker.">
+  <title>Teams Presence Checker</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f4f5f9; color: #202124; display: grid; place-items: start center; padding: 24px 14px; }
+    main { width: min(100%, 480px); }
+    .card { background: white; border: 1px solid #e2e4eb; border-radius: 20px; padding: 22px; box-shadow: 0 8px 28px #17255412; }
+    h1 { margin: 0; font-size: 1.35rem; }
+    h2 { font-size: 1.05rem; margin: 22px 0 10px; }
+    p { line-height: 1.5; color: #5d6472; }
+    .sub { margin: 6px 0 20px; font-size: .92rem; }
+    label { display: block; font-weight: 650; margin: 14px 0 6px; font-size: .9rem; }
+    input { width: 100%; padding: 12px; border: 1px solid #c8ccd6; border-radius: 10px; font: inherit; background: white; color: #202124; }
+    button { border: 0; border-radius: 10px; padding: 12px 16px; font: inherit; font-weight: 650; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .primary { background: #6264a7; color: white; width: 100%; margin-top: 16px; }
+    .secondary { background: #ececf5; color: #33345c; }
+    .danger { background: transparent; color: #a32929; padding: 8px 0; }
+    .hidden { display: none !important; }
+    .status-row { display: flex; align-items: center; gap: 13px; margin: 24px 0 18px; }
+    .dot { width: 18px; height: 18px; border-radius: 50%; background: #8a8f98; flex: 0 0 auto; box-shadow: 0 0 0 5px #8a8f9820; }
+    .dot.available { background: #16a34a; box-shadow: 0 0 0 5px #16a34a20; }
+    .dot.busy { background: #dc2626; box-shadow: 0 0 0 5px #dc262620; }
+    .dot.away { background: #d97706; box-shadow: 0 0 0 5px #d9770620; }
+    .status-title { font-size: 1.55rem; font-weight: 750; }
+    .muted { color: #687080; font-size: .88rem; }
+    .detail { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #eceef2; }
+    .detail strong { text-align: right; overflow-wrap: anywhere; }
+    .actions { display: flex; gap: 10px; margin-top: 18px; }
+    .actions button { flex: 1; }
+    #message { margin-top: 14px; font-size: .9rem; overflow-wrap: anywhere; }
+    #message.error { color: #b42318; }
+    .foot { margin: 14px 4px; font-size: .78rem; color: #747b88; text-align: center; }
+    .topline { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #15161a; color: #f1f1f4; }
+      .card { background: #22242b; border-color: #383b45; box-shadow: none; }
+      p, .muted, .foot { color: #b0b5c0; }
+      input { background: #17191f; color: #f1f1f4; border-color: #555a66; }
+      .secondary { background: #38394f; color: #ededff; }
+      .detail { border-color: #383b45; }
+    }
+  </style>
+  <script src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="topline">
+      <h1>Teams Presence Checker</h1>
+      <span class="muted">Read-only</span>
+    </div>
+    <p class="sub">Check the presence Microsoft Teams reports for your account, without opening Teams.</p>
+
+    <section id="setup">
+      <h2>First-time setup</h2>
+      <p>Enter the identifiers from your Microsoft Entra app registration. They are saved only in this browser on this device. No client secret is used.</p>
+      <form id="setupForm">
+        <label for="clientId">Application (client) ID</label>
+        <input id="clientId" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+        <label for="tenantId">Directory (tenant) ID</label>
+        <input id="tenantId" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+        <button class="primary" type="submit">Save configuration</button>
+      </form>
+      <p class="muted">Redirect URI: <span id="redirectText"></span></p>
+    </section>
+
+    <section id="signedOut" class="hidden">
+      <h2>Connect your work account</h2>
+      <p>Sign in with the same corporate account you used in Graph Explorer. The app requests only the delegated <strong>Presence.Read</strong> permission.</p>
+      <button id="signIn" class="primary">Sign in with Microsoft</button>
+    </section>
+
+    <section id="dashboard" class="hidden">
+      <div class="status-row">
+        <span id="statusDot" class="dot"></span>
+        <div>
+          <div id="availability" class="status-title">Unknown</div>
+          <div class="muted">Availability</div>
+        </div>
+      </div>
+      <div class="detail"><span class="muted">Activity</span><strong id="activity">—</strong></div>
+      <div class="detail"><span class="muted">Last checked</span><strong id="lastChecked">—</strong></div>
+      <div class="detail"><span class="muted">Next refresh</span><strong id="nextRefresh">—</strong></div>
+      <div class="actions">
+        <button id="refresh" class="primary">Refresh now</button>
+        <button id="signOut" class="secondary">Sign out</button>
+      </div>
+    </section>
+
+    <div id="message" role="status" aria-live="polite"></div>
+  </section>
+  <p class="foot">Refreshes every 15 minutes while this page is open. Background refresh is not guaranteed when Android suspends the browser.</p>
+  <p class="foot"><button id="editConfig" class="danger hidden" type="button">Change configuration</button></p>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const STORAGE_KEY = "teamsPresenceChecker.config.v1";
+  const SCOPES = ["Presence.Read"];
+  const REFRESH_MS = 15 * 60 * 1000;
+  const $ = (id) => document.getElementById(id);
+
+  let msalApp = null;
+  let account = null;
+  let refreshTimer = null;
+  let nextRefreshAt = null;
+  let busy = false;
+
+  $("redirectText").textContent = window.location.origin + window.location.pathname;
+
+  function showMessage(text, isError = false) {
+    $("message").textContent = text || "";
+    $("message").classList.toggle("error", isError);
+  }
+
+  function readConfig() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
+    catch { return null; }
+  }
+
+  function validGuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  function setSection(section) {
+    ["setup", "signedOut", "dashboard"].forEach(id => $(id).classList.toggle("hidden", id !== section));
+    $("editConfig").classList.toggle("hidden", section === "setup");
+  }
+
+  function formatLabel(value) {
+    if (!value) return "Unknown";
+    return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
+  }
+
+  function statusClass(availability) {
+    if (availability === "Available") return "available";
+    if (["Busy", "DoNotDisturb", "InACall", "InAConferenceCall", "Presenting"].includes(availability)) return "busy";
+    if (["Away", "BeRightBack"].includes(availability)) return "away";
+    return "";
+  }
+
+  function setBusy(value) {
+    busy = value;
+    $("refresh").disabled = value;
+    $("refresh").textContent = value ? "Refreshing…" : "Refresh now";
+    $("signIn").disabled = value;
+  }
+
+  function startRefreshClock() {
+    clearInterval(refreshTimer);
+    nextRefreshAt = Date.now() + REFRESH_MS;
+    updateCountdown();
+    refreshTimer = setInterval(() => {
+      updateCountdown();
+      if (Date.now() >= nextRefreshAt && !document.hidden && !busy) {
+        getPresence();
+      }
+    }, 1000);
+  }
+
+  function updateCountdown() {
+    if (!nextRefreshAt) return;
+    const remaining = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    $("nextRefresh").textContent = `${mins}:${String(secs).padStart(2, "0")}`;
+  }
+
+  async function initialize() {
+    const config = readConfig();
+    if (!config || !validGuid(config.clientId) || !validGuid(config.tenantId)) {
+      setSection("setup");
+      return;
+    }
+
+    if (typeof msal === "undefined") {
+      showMessage("Microsoft authentication library could not be loaded. Check your internet connection and reload.", true);
+      setSection("setup");
+      return;
+    }
+
+    msalApp = new msal.PublicClientApplication({
+      auth: {
+        clientId: config.clientId,
+        authority: `https://login.microsoftonline.com/${config.tenantId}`,
+        redirectUri: window.location.origin + window.location.pathname
+      },
+      cache: { cacheLocation: "localStorage" }
+    });
+
+    try {
+      const redirectResult = await msalApp.handleRedirectPromise();
+      const accounts = msalApp.getAllAccounts();
+      account = redirectResult?.account || accounts[0] || null;
+      if (account) {
+        msalApp.setActiveAccount(account);
+        setSection("dashboard");
+        $("signOut").textContent = "Sign out";
+        await getPresence();
+      } else {
+        setSection("signedOut");
+      }
+    } catch (error) {
+      console.error(error);
+      showMessage(error.message || "Authentication could not be initialized.", true);
+      setSection("signedOut");
+    }
+  }
+
+  async function signIn() {
+    if (!msalApp || busy) return;
+    showMessage("Redirecting to Microsoft sign-in…");
+    await msalApp.loginRedirect({ scopes: SCOPES });
+  }
+
+  async function getAccessToken() {
+    const request = { scopes: SCOPES, account };
+    try {
+      const result = await msalApp.acquireTokenSilent(request);
+      return result.accessToken;
+    } catch (error) {
+      if (error instanceof msal.InteractionRequiredAuthError) {
+        await msalApp.acquireTokenRedirect(request);
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async function getPresence() {
+    if (!msalApp || !account || busy) return;
+    setBusy(true);
+    showMessage("Checking Microsoft Graph…");
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+      const response = await fetch("https://graph.microsoft.com/v1.0/me/presence", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Microsoft Graph returned ${response.status}: ${detail.slice(0, 350)}`);
+      }
+      const data = await response.json();
+      const availability = formatLabel(data.availability);
+      const activity = formatLabel(data.activity);
+      $("availability").textContent = availability;
+      $("activity").textContent = activity;
+      $("statusDot").className = `dot ${statusClass(data.availability)}`;
+      $("lastChecked").textContent = new Date().toLocaleString();
+      startRefreshClock();
+      showMessage(`Connected as ${account.username || account.name || "your work account"}.`);
+    } catch (error) {
+      console.error(error);
+      showMessage(error.message || "Unable to retrieve presence.", true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  $("setupForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const clientId = $("clientId").value.trim();
+    const tenantId = $("tenantId").value.trim();
+    if (!validGuid(clientId) || !validGuid(tenantId)) {
+      showMessage("Please enter valid Application (client) ID and Directory (tenant) ID GUIDs.", true);
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ clientId, tenantId }));
+    showMessage("Configuration saved on this device.");
+    await initialize();
+  });
+
+  $("signIn").addEventListener("click", signIn);
+  $("refresh").addEventListener("click", getPresence);
+
+  $("signOut").addEventListener("click", async () => {
+    if (!msalApp || !account) return;
+    clearInterval(refreshTimer);
+    await msalApp.logoutRedirect({ account, postLogoutRedirectUri: window.location.origin + window.location.pathname });
+  });
+
+  $("editConfig").addEventListener("click", () => {
+    if (!confirm("Remove the saved app configuration and sign-in session from this browser?")) return;
+    clearInterval(refreshTimer);
+    localStorage.removeItem(STORAGE_KEY);
+    if (msalApp) msalApp.getTokenCache().clear();
+    location.reload();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && account && nextRefreshAt && Date.now() >= nextRefreshAt && !busy) {
+      getPresence();
+    }
+  });
+
+  initialize();
+})();
+</script>
+</body>
+</html>
